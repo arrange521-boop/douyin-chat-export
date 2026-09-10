@@ -497,10 +497,18 @@ class ChatLabExporter:
 
         exported_at = int(time.time())
         if output_path is None:
-            output_path = os.path.join(
-                self.output_dir,
-                build_export_filename(conv_name or conv_id, self.output_format, exported_at),
-            )
+            collision_index = None
+            while True:
+                filename = build_export_filename(
+                    conv_name or conv_id,
+                    self.output_format,
+                    exported_at,
+                    collision_index=collision_index,
+                )
+                output_path = os.path.join(self.output_dir, filename)
+                if not os.path.exists(output_path):
+                    break
+                collision_index = 2 if collision_index is None else collision_index + 1
         else:
             output_path = os.fspath(output_path)
 

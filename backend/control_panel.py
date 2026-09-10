@@ -69,6 +69,8 @@ _export_state = {
     "status": "idle",
     "file_path": None,
     "message": "",
+    "drive_status": "disabled",  # disabled | uploading | completed | failed
+    "drive_url": None,
 }
 
 # Database export/import replaces a single SQLite file. Keep the file swap
@@ -486,6 +488,8 @@ async def panel_status():
             "status": _export_state["status"],
             "file_path": _export_state["file_path"],
             "message": _export_state["message"],
+            "drive_status": _export_state.get("drive_status", "disabled"),
+            "drive_url": _export_state.get("drive_url"),
         },
         "scheduler": {
             "enabled": _scheduler_state["enabled"],
@@ -945,6 +949,8 @@ async def start_export(req: ExportRequest):
     _export_state["status"] = "running"
     _export_state["file_path"] = None
     _export_state["message"] = "正在导出..."
+    _export_state["drive_status"] = "disabled"
+    _export_state["drive_url"] = None
 
     # Persist selection
     if req.conversations is not None:
@@ -959,6 +965,8 @@ async def start_export(req: ExportRequest):
         "status": _export_state["status"],
         "message": _export_state["message"],
         "file_path": _export_state["file_path"],
+        "drive_status": _export_state.get("drive_status", "disabled"),
+        "drive_url": _export_state.get("drive_url"),
     }
 
 
@@ -1167,72 +1175,93 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
             _export_state["file_path"] = os.path.basename(output_path)
             size_mb = os.path.getsize(output_path) / (1024 * 1024)
             _export_state["message"] = f"数据库导出完成 ({size_mb:.1f} MB)"
-            _export_state["status"] = "completed"
-            return
-
-        # Decide targets
-        if conversations:
-            targets = conversations
-        elif filter_name:
-            targets = [filter_name]
         else:
-            targets = [None]  # None = exporter picks latest
+            # Decide targets
+            if conversations:
+                targets = conversations
+            elif filter_name:
+                targets = [filter_name]
+            else:
+                targets = [None]  # None = exporter picks latest
 
-        if len(targets) <= 1:
-            # Single file
-            exporter = ChatLabExporter(
-                conv_name=targets[0] or None,
-                output_format=fmt,
-                output_dir=data_dir,
-            )
-            output_path = exporter.export()
-            if not output_path or not os.path.exists(output_path):
-                raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
-            _export_state["file_path"] = os.path.basename(output_path)
-            size_mb = os.path.getsize(output_path) / (1024 * 1024)
-            _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
-        else:
-            # Multiple → bundle into a zip
-            tmp_dir = os.path.join(data_dir, "export_tmp")
-            os.makedirs(tmp_dir, exist_ok=True)
-            # Clear old tmp files
-            for fn in os.listdir(tmp_dir):
-                try:
-                    os.remove(os.path.join(tmp_dir, fn))
-                except Exception:
-                    pass
+            if len(targets) <= 1:
+                # Single file
+                exporter = ChatLabExporter(
+                    conv_name=targets[0] or None,
+                    output_format=fmt,
+                    output_dir=data_dir,
+                )
+                output_path = exporter.export()
+                if not output_path or not os.path.exists(output_path):
+                    raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
+                _export_state["file_path"] = os.path.basename(output_path)
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
+            else:
+                # Multiple → bundle into a zip
+                tmp_dir = os.path.join(data_dir, "export_tmp")
+                os.makedirs(tmp_dir, exist_ok=True)
+                # Clear old tmp files
+                for fn in os.listdir(tmp_dir):
+                    try:
+                        os.remove(os.path.join(tmp_dir, fn))
+                    except Exception:
+                        pass
 
-            produced = []
-            used_filenames = set()
-            exported_at = int(time.time())
-            for name in targets:
-                filename = build_export_filename(name, fmt, exported_at)
+                produced = []
+                used_filenames = set()
+                exported_at = int(time.time())
+                for name in targets:
+                    filename = build_export_filename(name, fmt, exported_at)
+                    collision_index = 2
+                    while filename in used_filenames:
+                        filename = build_export_filename(
+                            name, fmt, exported_at, collision_index=collision_index
+                        )
+                        collision_index += 1
+                    used_filenames.add(filename)
+                    path = os.path.join(tmp_dir, filename)
+                    try:
+                        ChatLabExporter(conv_name=name, output_format=fmt).export(path)
+                        if os.path.exists(path):
+                            produced.append((name, path))
+                    except Exception as e:
+                        print(f"[-] 导出 {name} 失败: {e}")
+
+                if not produced:
+                    raise RuntimeError("没有成功导出的会话")
+
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                zip_filename = f"chat_export_{timestamp}.zip"
+                zip_path = os.path.join(data_dir, zip_filename)
                 collision_index = 2
-                while filename in used_filenames:
-                    filename = build_export_filename(
-                        name, fmt, exported_at, collision_index=collision_index
-                    )
+                while os.path.exists(zip_path):
+                    zip_filename = f"chat_export_{timestamp}_{collision_index}.zip"
+                    zip_path = os.path.join(data_dir, zip_filename)
                     collision_index += 1
-                used_filenames.add(filename)
-                path = os.path.join(tmp_dir, filename)
-                try:
-                    ChatLabExporter(conv_name=name, output_format=fmt).export(path)
-                    if os.path.exists(path):
-                        produced.append((name, path))
-                except Exception as e:
-                    print(f"[-] 导出 {name} 失败: {e}")
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for _, path in produced:
+                        zf.write(path, arcname=os.path.basename(path))
 
-            if not produced:
-                raise RuntimeError("没有成功导出的会话")
+                output_path = zip_path
+                _export_state["file_path"] = zip_filename
+                size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+                _export_state["message"] = f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB)"
 
-            zip_path = os.path.join(data_dir, "export.zip")
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for _, path in produced:
-                    zf.write(path, arcname=os.path.basename(path))
+        from backend.panel.google_drive import upload_export_if_enabled
 
-            _export_state["file_path"] = "export.zip"
-            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-            _export_state["message"] = f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB)"
+        _export_state["drive_status"] = "uploading"
+        try:
+            drive_file = upload_export_if_enabled(output_path)
+            if drive_file is None:
+                _export_state["drive_status"] = "disabled"
+            else:
+                _export_state["drive_status"] = "completed"
+                _export_state["drive_url"] = drive_file.get("webViewLink")
+                _export_state["message"] += " · 已上传 Google Drive"
+        except Exception as drive_error:
+            _export_state["drive_status"] = "failed"
+            _export_state["message"] += f" · Google Drive 上传失败: {drive_error}"
 
         _export_state["status"] = "completed"
     except Exception as e:
@@ -1247,7 +1276,15 @@ async def download_export():
     path = os.path.join(paths.DATA_DIR, _export_state["file_path"])
     if not os.path.exists(path):
         return JSONResponse({"error": "File not found"}, status_code=404)
-    return FileResponse(path, filename=_export_state["file_path"])
+    return FileResponse(
+        path,
+        filename=_export_state["file_path"],
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 # ── Login (in-container headless with screenshot) ──

@@ -231,6 +231,35 @@ def test_export_without_output_path_uses_conversation_name_and_timestamp(temp_db
     assert os.path.exists(output)
 
 
+def test_export_without_output_path_never_overwrites_same_second(
+    temp_db, tmp_path, monkeypatch
+):
+    import extractor.models as models
+    import extractor.exporter as exporter_module
+
+    conn = models.get_db()
+    insert_conversation(conn, "c1", "测试会话", participant_uids='["owner"]')
+    conn.execute("INSERT INTO users (uid, nickname) VALUES ('owner','我')")
+    insert_message(conn, "m1", "c1", 1, sender_uid="owner", content="hi", msg_type=1)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(exporter_module.time, "time", lambda: 0)
+    exporter = ChatLabExporter(
+        conv_name="测试会话",
+        output_format="jsonl",
+        output_dir=str(tmp_path),
+    )
+    first = exporter.export()
+    second = exporter.export()
+
+    assert first != second
+    first_name = os.path.basename(first)
+    second_name = os.path.basename(second)
+    assert re.fullmatch(r"测试会话_\d{14}_export\.jsonl", first_name)
+    assert second_name == first_name.replace("测试会话_", "测试会话_2_", 1)
+
+
 def test_export_without_output_path_supports_long_unicode_name(temp_db, tmp_path):
     import extractor.models as models
 
@@ -280,7 +309,27 @@ def test_panel_batch_export_keeps_sanitized_filename_collisions(
     control_panel._do_export("jsonl", "", ["a/b", "a:b"])
 
     assert control_panel._export_state["status"] == "completed"
-    with zipfile.ZipFile(tmp_path / "export.zip") as archive:
+    zip_name = control_panel._export_state["file_path"]
+    assert re.fullmatch(r"chat_export_\d{8}_\d{6}(?:_\d+)?\.zip", zip_name)
+    with zipfile.ZipFile(tmp_path / zip_name) as archive:
         names = archive.namelist()
     assert len(names) == 2
     assert len(set(names)) == 2
+
+
+def test_panel_export_download_disables_caching(tmp_path, monkeypatch):
+    import asyncio
+
+    from backend import control_panel
+    from common import paths
+
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path))
+    filename = "latest_export.jsonl"
+    (tmp_path / filename).write_text("{}\n", encoding="utf-8")
+    control_panel._export_state["file_path"] = filename
+
+    response = asyncio.run(control_panel.download_export())
+
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"

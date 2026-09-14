@@ -506,52 +506,61 @@ async def panel_status():
 
 @control_router.post("/api/scrape")
 async def start_scrape(req: ScrapeRequest):
-    if _scrape_state["status"] == "running":
-        return JSONResponse({"error": "Scrape already running"}, status_code=409)
+    async with _browser_job_start_lock:
+        conflict = _browser_job_conflict()
+        if conflict:
+            return JSONResponse({"error": conflict}, status_code=409)
 
-    probe = await _probe_login_state()
-    if not probe["has_cookies"]:
-        return JSONResponse(
-            {"error": "未检测到登录态，请先扫码登录或导入 Cookie"},
-            status_code=400,
-        )
+        probe = await _probe_login_state()
+        if not probe["has_cookies"]:
+            return JSONResponse(
+                {"error": probe.get("message") or "未检测到登录态，请先扫码登录或导入 Cookie"},
+                status_code=409 if probe.get("status") == "busy" else 400,
+            )
 
-    # Selected conversations (checkbox list) take precedence over free-text filter
-    effective_filter = ",".join(req.conversations) if req.conversations else req.filter
+        # Recheck after the awaited probe: a competing endpoint may have
+        # reserved the persistent browser profile in the meantime.
+        conflict = _browser_job_conflict()
+        if conflict:
+            return JSONResponse({"error": conflict}, status_code=409)
 
-    cmd = [sys.executable, "-u", "extract.py"]
-    if req.incremental:
-        cmd.append("--incremental")
-    if effective_filter:
-        cmd.extend(["--filter", effective_filter])
-    if _load_config().get("download_images"):
-        cmd.append("--download-images")
+        # Selected conversations (checkbox list) take precedence over free-text filter
+        effective_filter = ",".join(req.conversations) if req.conversations else req.filter
 
-    _scrape_state["status"] = "running"
-    _scrape_state["kind"] = "scrape"
-    _scrape_state["started_at"] = time.time()
-    _scrape_state["finished_at"] = None
-    _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
-    if req.conversations:
-        _scrape_state["message"] += f" ({len(req.conversations)} 个会话)"
-    elif req.filter:
-        _scrape_state["message"] += f" (过滤: {req.filter})"
+        cmd = [sys.executable, "-u", "extract.py"]
+        if req.incremental:
+            cmd.append("--incremental")
+        if effective_filter:
+            cmd.extend(["--filter", effective_filter])
+        if _load_config().get("download_images"):
+            cmd.append("--download-images")
 
-    # Persist selection so it's remembered next time
-    if req.conversations is not None:
-        cfg = _load_config()
-        cfg["scraper_selected"] = list(req.conversations)
-        _save_config(cfg)
+        _scrape_state["status"] = "running"
+        _scrape_state["kind"] = "scrape"
+        _scrape_state["started_at"] = time.time()
+        _scrape_state["finished_at"] = None
+        _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
+        if req.conversations:
+            _scrape_state["message"] += f" ({len(req.conversations)} 个会话)"
+        elif req.filter:
+            _scrape_state["message"] += f" (过滤: {req.filter})"
 
-    asyncio.create_task(_run_scrape(cmd))
-    return {"status": "started", "message": _scrape_state["message"]}
+        # Persist selection so it's remembered next time
+        if req.conversations is not None:
+            cfg = _load_config()
+            cfg["scraper_selected"] = list(req.conversations)
+            _save_config(cfg)
+
+        asyncio.create_task(_run_scrape(cmd))
+        return {"status": "started", "message": _scrape_state["message"]}
 
 
 @control_router.post("/api/voice-transcriptions/backfill")
 async def start_voice_backfill(req: VoiceBackfillRequest | None = None):
     """Start a local-DB voice backfill without fetching chat history again."""
-    if _scrape_state["status"] == "running":
-        return JSONResponse({"error": "Scrape already running"}, status_code=409)
+    conflict = _browser_job_conflict()
+    if conflict:
+        return JSONResponse({"error": conflict}, status_code=409)
 
     conversations = list((req.conversations if req else None) or [])
     cmd = [sys.executable, "-u", "extract.py", "--transcribe-voices"]
@@ -693,6 +702,19 @@ def _read_conv_list():
 
 
 _login_probe_lock = asyncio.Lock()
+_browser_job_start_lock = asyncio.Lock()
+
+
+def _browser_job_conflict() -> str | None:
+    """Return why the persistent Chromium profile is already reserved."""
+    if _scrape_state["status"] == "running":
+        return "采集任务正在运行"
+    if _discover_state["status"] == "running":
+        return "会话列表正在刷新"
+    login_state = globals().get("_login_state", {})
+    if login_state.get("status") in ("starting", "waiting_scan"):
+        return "登录流程正在运行"
+    return None
 
 
 async def _probe_login_state() -> dict:
@@ -714,7 +736,16 @@ async def _probe_login_state() -> dict:
     refresh/scrape preconditions can't race to launch two Chromium
     instances on the same profile (which would lock-conflict).
     """
+    conflict = _browser_job_conflict()
+    if conflict:
+        return {"status": "busy", "has_cookies": False, "message": conflict}
+
     async with _login_probe_lock:
+        # A task may start while this request waits for an earlier probe.
+        # Never open a second Chromium against the same persistent profile.
+        conflict = _browser_job_conflict()
+        if conflict:
+            return {"status": "busy", "has_cookies": False, "message": conflict}
         has_profile = os.path.isdir(_USER_DATA_DIR) and os.listdir(_USER_DATA_DIR)
         if not has_profile:
             return {"status": "no_profile", "has_cookies": False}
@@ -748,29 +779,34 @@ async def _probe_login_state() -> dict:
 @control_router.post("/api/conversations/refresh")
 async def refresh_conversations():
     """Run a lightweight scrape that only enumerates the conversation list."""
-    if _discover_state["status"] == "running":
-        return JSONResponse({"error": "Refresh already running"}, status_code=409)
-    if _scrape_state["status"] == "running":
-        return JSONResponse({"error": "Scraper is running — stop it first"}, status_code=409)
+    async with _browser_job_start_lock:
+        conflict = _browser_job_conflict()
+        if conflict:
+            return JSONResponse({"error": conflict}, status_code=409)
 
-    # Pre-check: don't spawn the 3-minute browser wait if we already know
-    # there's no usable session. Uses the same Playwright probe as the
-    # login badge so the two never disagree.
-    probe = await _probe_login_state()
-    if not probe["has_cookies"]:
-        return JSONResponse(
-            {"error": "未检测到登录态，请先扫码登录或导入 Cookie"},
-            status_code=400,
-        )
+        # Pre-check: don't spawn the 3-minute browser wait if we already know
+        # there's no usable session. Uses the same Playwright probe as the
+        # login badge so the two never disagree.
+        probe = await _probe_login_state()
+        if not probe["has_cookies"]:
+            return JSONResponse(
+                {"error": probe.get("message") or "未检测到登录态，请先扫码登录或导入 Cookie"},
+                status_code=409 if probe.get("status") == "busy" else 400,
+            )
 
-    _discover_state["status"] = "running"
-    _discover_state["message"] = "正在加载会话列表..."
-    _discover_state["started_at"] = time.time()
-    _discover_state["finished_at"] = None
+        # Recheck after the awaited probe before reserving the profile.
+        conflict = _browser_job_conflict()
+        if conflict:
+            return JSONResponse({"error": conflict}, status_code=409)
 
-    cmd = [sys.executable, "-u", "extract.py", "--list-conversations"]
-    asyncio.create_task(_run_discover(cmd))
-    return {"status": "started"}
+        _discover_state["status"] = "running"
+        _discover_state["message"] = "正在加载会话列表..."
+        _discover_state["started_at"] = time.time()
+        _discover_state["finished_at"] = None
+
+        cmd = [sys.executable, "-u", "extract.py", "--list-conversations"]
+        asyncio.create_task(_run_discover(cmd))
+        return {"status": "started"}
 
 
 async def _run_discover(cmd):
@@ -1321,6 +1357,8 @@ async def login_start():
     # If scraper is running, reject
     if _scrape_state["status"] == "running":
         return JSONResponse({"error": "请先停止采集再登录"}, status_code=409)
+    if _discover_state["status"] == "running":
+        return JSONResponse({"error": "请先停止刷新会话再登录"}, status_code=409)
 
     _login_state["status"] = "starting"
     _login_state["screenshot"] = None

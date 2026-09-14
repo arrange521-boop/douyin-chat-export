@@ -18,6 +18,48 @@ def test_panel_html_disables_browser_cache():
     )
 
 
+def test_concurrent_scrape_requests_start_only_one_job(monkeypatch):
+    created = []
+
+    async def delayed_login_probe():
+        await asyncio.sleep(0.02)
+        return {"status": "logged_in", "has_cookies": True}
+
+    def capture_task(coro):
+        created.append(coro)
+        coro.close()
+
+    monkeypatch.setattr(cp, "_probe_login_state", delayed_login_probe)
+    monkeypatch.setattr(cp.asyncio, "create_task", capture_task)
+    monkeypatch.setattr(cp, "_load_config", lambda: {})
+    monkeypatch.setitem(cp._scrape_state, "status", "idle")
+    monkeypatch.setitem(cp._discover_state, "status", "idle")
+    monkeypatch.setitem(cp._login_state, "status", "idle")
+
+    async def scenario():
+        request = cp.ScrapeRequest(incremental=True, conversations=None)
+        return await asyncio.gather(
+            cp.start_scrape(request),
+            cp.start_scrape(request),
+        )
+
+    first, second = asyncio.run(scenario())
+
+    assert first["status"] == "started"
+    assert getattr(second, "status_code", None) == 409
+    assert len(created) == 1
+
+
+def test_login_probe_does_not_open_browser_during_scrape(monkeypatch):
+    monkeypatch.setitem(cp._scrape_state, "status", "running")
+    result = asyncio.run(cp._probe_login_state())
+    assert result == {
+        "status": "busy",
+        "has_cookies": False,
+        "message": "采集任务正在运行",
+    }
+
+
 @pytest.fixture
 def isolated_scrape(tmp_path, monkeypatch):
     """Point the scrape log at a temp file and capture failure notifications so

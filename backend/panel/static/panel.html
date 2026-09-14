@@ -478,6 +478,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       <button class="btn btn-primary" id="scrapeBtn" onclick="startScrape()" data-i18n="start">开始</button>
       <button class="btn btn-danger" id="stopBtn" onclick="stopScrape()" style="display:none" data-i18n="stop">停止</button>
     </div>
+    <div id="scrapeError" class="inline-error" style="display:none;"></div>
     <div class="conv-list-toolbar" style="margin-top:10px;">
       <span data-i18n="selectConvsLabel">选择会话:</span>
       <a href="#" onclick="selectAllConvs('scrape',true);return false;" data-i18n="selectAll">全选</a>
@@ -1338,13 +1339,29 @@ async function startScrape() {
   if (!incremental && !(await openConfirmModal('confirmFullScrape'))) {
     return;
   }
-  document.getElementById('scrapeBtn').disabled = true;
-  await fetch('/panel/api/scrape', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ incremental, conversations }),
-  });
-  loadStatus();
+  const button = document.getElementById('scrapeBtn');
+  const errorBox = document.getElementById('scrapeError');
+  button.disabled = true;
+  errorBox.style.display = 'none';
+  errorBox.textContent = '';
+  setStatusEl(document.getElementById('scrapeStatus'), 'running');
+  try {
+    const response = await fetch('/panel/api/scrape', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ incremental, conversations }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `${t('error')} (${response.status})`);
+    }
+    await loadStatus();
+  } catch (error) {
+    setStatusEl(document.getElementById('scrapeStatus'), 'failed');
+    setDynText(errorBox, error?.message || t('error'));
+    errorBox.style.display = '';
+    button.disabled = false;
+  }
 }
 
 async function startVoiceBackfill() {

@@ -11,6 +11,13 @@ import pytest
 from backend import control_panel as cp
 
 
+def test_panel_html_disables_browser_cache():
+    response = asyncio.run(cp.panel_page())
+    assert response.headers["cache-control"] == (
+        "no-store, no-cache, must-revalidate, max-age=0"
+    )
+
+
 @pytest.fixture
 def isolated_scrape(tmp_path, monkeypatch):
     """Point the scrape log at a temp file and capture failure notifications so

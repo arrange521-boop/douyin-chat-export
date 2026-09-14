@@ -454,7 +454,12 @@ async def _run_video_backfill():
 async def panel_page():
     return HTMLResponse(
         content=PANEL_HTML,
-        headers={"Content-Type": "text/html; charset=utf-8"},
+        headers={
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 

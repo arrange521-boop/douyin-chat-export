@@ -256,7 +256,15 @@ class WebChatScraper:
         for attempt in range(3):
             await self.page.goto(CHAT_URL, wait_until="domcontentloaded")
             try:
-                await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
+                # Douyin keeps conversation rows mounted while animating or
+                # virtualising the list.  Playwright's default state is
+                # ``visible``, which can time out even though the rows already
+                # exist and contain usable data.  Waiting for attachment is the
+                # reliable readiness signal for both desktop and mobile-sized
+                # layouts.
+                await self.page.wait_for_selector(
+                    SEL_CONV_ITEM, timeout=20000, state="attached"
+                )
                 print(f"[+] 当前页面: {self.page.url}")
                 return
             except Exception as e:
@@ -643,7 +651,9 @@ class WebChatScraper:
         re-renders and break subsequent clicks.
         """
         try:
-            await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
+            await self.page.wait_for_selector(
+                SEL_CONV_ITEM, timeout=20000, state="attached"
+            )
         except Exception:
             return 0
         await asyncio.sleep(1)

@@ -1,1 +1,268 @@
-The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>关系逐句分析看板 · Hybrid Cognitive Pipeline</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#17191d; --muted:#6f7682; --line:#e7e9ee;
+  --accent:#2f5bea; --accent2:#0f8a67; --warn:#b36a00; --danger:#b43b3b;
+  --soft:#eef2ff; --radius:18px; --shadow:0 10px 30px rgba(21,29,45,.06);
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+aside{background:#10131a;color:#fff;padding:24px 16px;position:sticky;top:0;height:100vh}
+.brand{font-size:18px;font-weight:800;letter-spacing:.2px;margin:0 8px 6px}.sub{font-size:12px;color:#8e96a6;margin:0 8px 24px}
+.nav button{width:100%;border:0;background:transparent;color:#c4c9d3;text-align:left;padding:11px 12px;border-radius:12px;margin:3px 0;cursor:pointer;font:inherit}
+.nav button.active,.nav button:hover{background:#202633;color:white}
+main{padding:22px;min-width:0}.topbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap}
+h1{font-size:23px;margin:0}.hint{color:var(--muted);font-size:12px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+button,.btn,input,select,textarea{font:inherit}.btn,button.primary{border:1px solid var(--line);background:#fff;padding:9px 12px;border-radius:11px;cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.kpi{padding:16px;background:#fff;border:1px solid var(--line);border-radius:16px}.kpi .n{font-size:26px;font-weight:800}.kpi .t{color:var(--muted);font-size:12px}
+.controls{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr 2fr;gap:10px;margin-bottom:14px}.controls input,.controls select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:#f0f2f6;color:#545b67;font-size:12px;margin:2px 3px 2px 0}.tag.blue{background:#eef2ff;color:#2d50bd}.tag.green{background:#eaf8f2;color:#16765b}.tag.orange{background:#fff3e2;color:#9b5b00}.tag.red{background:#fdecec;color:#a13232}
+.section{display:none}.section.active{display:block}
+.chart{width:100%;height:230px}.bars .row{display:grid;grid-template-columns:100px 1fr 46px;gap:10px;align-items:center;margin:9px 0}.bar{height:10px;background:#eef0f3;border-radius:999px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--accent);border-radius:999px}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff}.tbl{width:100%;border-collapse:collapse;min-width:1000px}.tbl th{position:sticky;top:0;background:#fafbfc;z-index:1;color:#66707d;font-size:12px;text-align:left;padding:10px;border-bottom:1px solid var(--line)}.tbl td{padding:10px;border-bottom:1px solid #f0f1f4;vertical-align:top}.tbl tr:hover{background:#fafcff}.msg{max-width:420px;white-space:pre-wrap;word-break:break-word}.sender{font-weight:700}
+.detail{display:none;background:#fbfcff}.detail.open{display:table-row}.detailbox{padding:14px 16px 18px}.detailgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.detailbox h4{margin:0 0 5px;font-size:12px;color:#68717e}.detailbox p{margin:0}
+.pager{display:flex;align-items:center;justify-content:space-between;margin-top:10px}.pager .left{color:var(--muted)}
+.timeline{display:grid;gap:8px}.dayrow{display:grid;grid-template-columns:92px 1fr 70px 70px;gap:10px;align-items:center}.spark{height:12px;background:#eff1f4;border-radius:999px;overflow:hidden}.spark i{display:block;height:100%;background:var(--accent)}
+.offline-card{border:1px solid var(--line);border-radius:14px;padding:13px;margin:10px 0;background:#fff}.offline-card .meta{font-size:12px;color:var(--muted);margin-bottom:5px}
+form.offline{display:grid;grid-template-columns:150px 110px 1fr;gap:8px}.offline input,.offline textarea{border:1px solid var(--line);border-radius:10px;padding:9px}.offline textarea{grid-column:1/-1;min-height:70px}
+.method{max-width:900px}.method h3{margin-top:22px}.callout{border-left:3px solid var(--accent);background:#f3f6ff;padding:12px 14px;border-radius:10px;margin:12px 0}
+.mini{font-size:12px;color:var(--muted)} .right{text-align:right}
+svg text{font-family:inherit;fill:#6f7682;font-size:11px}
+@media(max-width:900px){
+  .app{grid-template-columns:1fr}aside{position:static;height:auto;padding:12px}.brand,.sub{display:none}.nav{display:flex;overflow:auto;gap:6px}.nav button{white-space:nowrap;width:auto}
+  main{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}.controls{grid-template-columns:1fr 1fr}.controls .search{grid-column:1/-1}.grid{display:block}.panel{margin-bottom:12px}.detailgrid{grid-template-columns:1fr}.dayrow{grid-template-columns:78px 1fr 48px 48px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand">逐句关系分析</div>
+  <div class="sub">Hybrid Cognitive Pipeline · Local-first</div>
+  <div class="nav">
+    <button data-tab="overview" class="active">总览</button>
+    <button data-tab="sentences">逐句分析</button>
+    <button data-tab="timeline">时序动态</button>
+    <button data-tab="dimensions">关系维度</button>
+    <button data-tab="offline">线下锚点</button>
+    <button data-tab="evidence">证据库</button>
+    <button data-tab="method">方法论</button>
+  </div>
+</aside>
+<main>
+  <div class="topbar">
+    <div><h1>关系逐句分析看板</h1><div class="hint">不输出“喜欢概率”；事实、推断、证据不足分层；线下事件与聊天导出严格分开。</div></div>
+    <div class="actions">
+      <label class="btn">导入新版 JSONL<input id="fileIn" type="file" accept=".jsonl,.json" hidden></label>
+      <button class="btn" id="exportBtn">导出筛选结果</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <input id="startDate" type="date">
+    <input id="endDate" type="date">
+    <select id="sender"><option value="">全部发送者</option></select>
+    <select id="topic"><option value="">全部主题</option></select>
+    <input class="search" id="q" placeholder="搜索原话 / 意图 / 维度">
+  </div>
+
+  <section id="overview" class="section active">
+    <div class="kpis">
+      <div class="kpi"><div class="t">筛选消息</div><div class="n" id="kMsg">-</div></div>
+      <div class="kpi"><div class="t">长间隔主动重启</div><div class="n" id="kRestart">-</div></div>
+      <div class="kpi"><div class="t">高信息句</div><div class="n" id="kHigh">-</div></div>
+      <div class="kpi"><div class="t">活跃天数</div><div class="n" id="kDays">-</div></div>
+    </div>
+    <div class="grid">
+      <div class="panel" style="grid-column:span 8"><h3>每日互动趋势</h3><div id="dailyChart" class="chart"></div></div>
+      <div class="panel" style="grid-column:span 4"><h3>主题结构</h3><div id="topicBars" class="bars"></div></div>
+      <div class="panel" style="grid-column:span 6"><h3>主动重启结构</h3><div id="restartBars" class="bars"></div></div>
+      <div class="panel" style="grid-column:span 6"><h3>当前解释提醒</h3>
+        <div class="callout"><b>默认原则：</b>一句话只做一句话能支持的判断。关系结论必须来自重复、跨场景、成本、主动性和后续行为。</div>
+        <div class="mini">“未躲开”只代表当次未表现回避；“主动靠近/主动发起”信息量更高；明确边界按字面持续有效，除非对方后来明确撤回或重新协商。</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sentences" class="section">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0">逐句分析</h3><div class="mini">点击任意一行展开：为什么这么判 / 竞争解释 / 什么会改变判断</div>
+      </div>
+      <div class="tablewrap"><table class="tbl"><thead><tr>
+        <th>时间</th><th>发送者</th><th>原话</th><th>意图</th><th>主题</th><th>能耗</th><th>边界</th><th>置信度</th>
+      </tr></thead><tbody id="sentenceBody"></tbody></table></div>
+      <div class="pager"><div class="left" id="pageInfo"></div><div><button class="btn" id="prev">上一页</button> <button class="btn" id="next">下一页</button></div></div>
+    </div>
+  </section>
+
+  <section id="timeline" class="section">
+    <div class="panel"><h3>每日状态跟踪</h3><div class="mini">消息量只做背景，不直接等同投入；“重启次数”更关注谁在没有现成对话时主动重新建立连接。</div><div id="dayRows" class="timeline" style="margin-top:14px"></div></div>
+  </section>
+
+  <section id="dimensions" class="section">
+    <div class="grid">
+      <div class="panel" style="grid-column:span 6"><h3>关系维度密度</h3><div id="dimBars" class="bars"></div></div>
+      <div class="panel" style="grid-column:span 6"><h3>安全边界结构</h3><div id="boundaryBars" class="bars"></div></div>
+      <div class="panel" style="grid-column:span 12"><h3>使用说明</h3><div class="callout">这里统计的是“文本中出现了多少次明确维度信号”，不是人格分数，也不是爱情分数。身体亲密、照顾行为、共同事务、公开边界、身份/义务边界必须分开看。</div></div>
+    </div>
+  </section>
+
+  <section id="offline" class="section">
+    <div class="panel">
+      <h3>现实锚点 / 线下事件</h3>
+      <div class="mini">这部分不与聊天记录混写。用户补录后保存在本浏览器 localStorage。</div>
+      <div id="offlineList"></div>
+      <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+      <form class="offline" id="offlineForm">
+        <input type="date" id="oDate" required><input id="oTime" placeholder="时间/场景"><input id="oTags" placeholder="标签，如：身体亲密,共同活动">
+        <textarea id="oEvent" placeholder="只记录发生了什么，不先解释为什么" required></textarea>
+        <button class="primary" type="submit">新增线下事件</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="evidence" class="section">
+    <div class="panel"><h3>高信息证据库</h3><div class="mini">默认收录：长间隔主动重启、边界表达、共同事务执行、照顾提醒、能耗≥4 的句子。</div>
+      <div id="evidenceList" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section id="method" class="section">
+    <div class="panel method">
+      <h3>四层 Hybrid Cognitive Pipeline</h3>
+      <p><b>1. 元数据层：</b>响应延迟、消息长度、长间隔重启、对话轮次、时间分布。</p>
+      <p><b>2. 语义与心理层：</b>只做场景行为和功能判断；不硬贴“大五人格/回避型”等永久标签。</p>
+      <p><b>3. 时序动态层：</b>观察“接近 → 边界 → 降频 → 恢复”“冲突后是否撤退”“线下亲密后次日是否降温”等序列。</p>
+      <p><b>4. 现实锚点层：</b>旅行、见面、身体接触、成本、第三方事件等单独补录，用来纠正“文字热络但现实疏离”。</p>
+      <h3>核心证据权重</h3>
+      <div class="callout"><b>高：</b>重复 + 主动 + 跨场景 + 有成本 + 后续不撤退。<br><b>中：</b>单次主动、明确事务执行、个性化照顾。<br><b>低：</b>回复速度、表情、单句暧昧、一次“不躲”。</div>
+      <h3>反幻觉规则</h3>
+      <p>不把“不回复”解释成试探，不把“边界”解释成反话，不用“她就是因为喜欢才防御”这种不可证伪逻辑。每条推断都必须允许反证。</p>
+    </div>
+  </section>
+</main>
+</div>
+<script>
+let DATA = [];
+const OFFLINE_SEED = [{"date":"2026-09-21","time":"晚间","event":"共同游泳，出现较多身体玩闹与身体接近","source":"用户线下口述","tags":["共同活动","身体亲密"],"confidence":"事实（用户口述）","note":"不与聊天导出混写"},{"date":"2026-09-21","time":"晚间","event":"对方在水中反复主动碰脚；用户抓住其脚腕时未见明显躲避","source":"用户线下口述","tags":["身体亲密","现实锚点"],"confidence":"事实（用户口述）","note":"“未躲避”只证明当次未表现回避，不自动等于更高层级同意"},{"date":"2026-09-21","time":"分别前","event":"对方提到“明天可能见不上你”","source":"用户线下口述","tags":["见面连续性"],"confidence":"事实（用户口述）","note":"单次样本；重复出现时权重上升"},{"date":"2026-09-21","time":"白天/线下","event":"对方主动提到最近没给用户带东西，并问想吃什么；用户表示甜品、面包均可","source":"用户线下口述","tags":["照顾行为","主动维护"],"confidence":"事实（用户口述）","note":"更像“主动恢复照顾惯例”，不单独等于恋爱证据"}];
+const PAGE=60; let page=1;
+
+const $=s=>document.querySelector(s);
+const esc=s=>(s??"").toString().replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const uniq=a=>[...new Set(a)];
+
+function initFilters(){
+  const dates=DATA.map(x=>x.date).sort();
+  if(dates.length){ $("#startDate").value=dates[0]; $("#endDate").value=dates[dates.length-1]; }
+  $("#sender").innerHTML='<option value="">全部发送者</option>'+uniq(DATA.map(x=>x.sender)).map(x=>`<option>${esc(x)}</option>`).join("");
+  $("#topic").innerHTML='<option value="">全部主题</option>'+uniq(DATA.flatMap(x=>x.topics)).sort().map(x=>`<option>${esc(x)}</option>`).join("");
+}
+function filtered(){
+  const s=$("#startDate").value,e=$("#endDate").value,sd=$("#sender").value,tp=$("#topic").value,q=$("#q").value.trim().toLowerCase();
+  return DATA.filter(x=>(!s||x.date>=s)&&(!e||x.date<=e)&&(!sd||x.sender===sd)&&(!tp||x.topics.includes(tp))&&(!q||[x.content,x.intent,...x.topics,...x.dims].join(" ").toLowerCase().includes(q)));
+}
+function count(arr,key){const m={};arr.forEach(x=>{const k=key(x);m[k]=(m[k]||0)+1});return m}
+function renderAll(){const d=filtered(); renderOverview(d); renderSentences(d); renderTimeline(d); renderDims(d); renderEvidence(d)}
+function renderOverview(d){
+  $("#kMsg").textContent=d.length.toLocaleString();
+  $("#kRestart").textContent=d.filter(x=>x.restart).length.toLocaleString();
+  $("#kHigh").textContent=d.filter(x=>x.energy>=4).length.toLocaleString();
+  $("#kDays").textContent=uniq(d.map(x=>x.date)).length;
+  const daily=count(d,x=>x.date), arr=Object.entries(daily).sort();
+  const max=Math.max(1,...arr.map(x=>x[1]));
+  const w=760,h=210,p=28;
+  if(!arr.length){$("#dailyChart").innerHTML="暂无数据";return}
+  const pts=arr.map((x,i)=>{const X=p+(w-2*p)*(arr.length===1?0:i/(arr.length-1));const Y=h-p-(h-2*p)*(x[1]/max);return [X,Y,x]});
+  $("#dailyChart").innerHTML=`<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%">
+    <line x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}" stroke="#e6e8ed"/>
+    <polyline points="${pts.map(p=>p[0]+","+p[1]).join(" ")}" fill="none" stroke="#2f5bea" stroke-width="2.5"/>
+    ${pts.filter((_,i)=>i%Math.max(1,Math.floor(arr.length/7))===0||i===arr.length-1).map(p=>`<text x="${p[0]}" y="${h-8}" text-anchor="middle">${p[2][0].slice(5)}</text>`).join("")}
+    ${pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="2.8" fill="#2f5bea"><title>${p[2][0]} · ${p[2][1]}条</title></circle>`).join("")}
+  </svg>`;
+  const tops=count(d,x=>x.topics[0]); renderBars("#topicBars",tops,8);
+  const rest=count(d.filter(x=>x.restart),x=>x.sender); renderBars("#restartBars",rest,6);
+}
+function renderBars(sel,obj,limit){
+  const a=Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,limit),max=Math.max(1,...a.map(x=>x[1]));
+  $(sel).innerHTML=a.map(([k,v])=>`<div class="row"><div>${esc(k)}</div><div class="bar"><i style="width:${100*v/max}%"></i></div><div class="right">${v}</div></div>`).join("")||'<div class="mini">暂无</div>';
+}
+function renderSentences(d){
+  const total=Math.max(1,Math.ceil(d.length/PAGE)); if(page>total)page=total;
+  const rows=d.slice((page-1)*PAGE,page*PAGE);
+  $("#sentenceBody").innerHTML=rows.map(x=>`<tr class="mainrow" data-i="${x.i}">
+    <td>${x.date}<br><span class="mini">${x.time}${x.restart?' · 重启':''}</span></td>
+    <td class="sender">${esc(x.sender)}</td><td class="msg">${esc(x.content)}</td>
+    <td><span class="tag blue">${esc(x.intent)}</span></td>
+    <td>${x.topics.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</td>
+    <td>${"●".repeat(x.energy)}<span style="color:#ddd">${"●".repeat(5-x.energy)}</span></td>
+    <td><span class="tag ${x.boundary==='收紧'?'red':x.boundary==='开放/共建'?'green':'orange'}">${esc(x.boundary)}</span></td>
+    <td>${esc(x.confidence)}</td>
+  </tr><tr class="detail" id="d${x.i}"><td colspan="8"><div class="detailbox"><div class="detailgrid">
+    <div><h4>为什么这么判</h4><p>${esc(x.why)}</p></div>
+    <div><h4>竞争解释</h4><p>${esc(x.competing)}</p></div>
+    <div><h4>什么会改变判断</h4><p>${esc(x.falsifier)}</p></div>
+  </div><div style="margin-top:10px">${x.dims.map(t=>`<span class="tag green">${esc(t)}</span>`).join("")}<span class="tag">轮次 #${x.turn}</span>${x.gap_min!=null?`<span class="tag">距上一条 ${x.gap_min} 分钟</span>`:""}</div></div></td></tr>`).join("");
+  document.querySelectorAll(".mainrow").forEach(tr=>tr.onclick=()=>$("#d"+tr.dataset.i).classList.toggle("open"));
+  $("#pageInfo").textContent=`第 ${page}/${total} 页 · ${d.length.toLocaleString()} 条`;
+}
+function renderTimeline(d){
+  const by={}; d.forEach(x=>{by[x.date]??={n:0,re:0,hi:0};by[x.date].n++;if(x.restart)by[x.date].re++;if(x.energy>=4)by[x.date].hi++});
+  const a=Object.entries(by).sort().reverse(),max=Math.max(1,...a.map(x=>x[1].n));
+  $("#dayRows").innerHTML=a.map(([day,v])=>`<div class="dayrow"><div>${day.slice(5)}</div><div class="spark"><i style="width:${100*v.n/max}%"></i></div><div title="主动重启">↻ ${v.re}</div><div title="高信息句">◆ ${v.hi}</div></div>`).join("");
+}
+function renderDims(d){
+  const dims={};d.forEach(x=>x.dims.forEach(k=>dims[k]=(dims[k]||0)+1));renderBars("#dimBars",dims,10);
+  const b=count(d,x=>x.boundary);renderBars("#boundaryBars",b,10);
+}
+function renderEvidence(d){
+  const a=d.filter(x=>x.restart||x.energy>=4||x.intent==="边界表达"||x.intent==="计划/执行"||x.intent==="照顾/提醒").slice().reverse().slice(0,180);
+  $("#evidenceList").innerHTML=a.map(x=>`<div class="offline-card"><div class="meta">${x.date} ${x.time} · ${esc(x.sender)} · 置信度 ${x.confidence}</div><div>${esc(x.content)}</div><div style="margin-top:6px">${x.topics.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}${x.dims.map(t=>`<span class="tag green">${esc(t)}</span>`).join("")}</div><div class="mini" style="margin-top:6px">${esc(x.why)}</div></div>`).join("");
+}
+function offlineData(){return JSON.parse(localStorage.getItem("relationship_offline_events")||"null")||OFFLINE_SEED}
+function renderOffline(){
+  const a=offlineData().slice().reverse();
+  $("#offlineList").innerHTML=a.map((x,i)=>`<div class="offline-card"><div class="meta">${esc(x.date)} ${esc(x.time||"")} · ${esc(x.source||"本地补录")}</div><div>${esc(x.event)}</div><div style="margin-top:6px">${(x.tags||[]).map(t=>`<span class="tag green">${esc(t)}</span>`).join("")}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:""}</div>`).join("");
+}
+function analyzeImported(objs){
+  const topicRules=${JSON.stringify(topic_rules, ensure_ascii=False)};
+  let out=[],prev=null,turn=0,lastS=null,lastT=null;
+  const cTopic=c=>{let h=[];Object.entries(topicRules).forEach(([k,ks])=>{if(ks.some(z=>c.includes(z)))h.push(k)});return h.length?h:["一般交流"]};
+  objs.forEach((o,idx)=>{
+    if(o._type!=="message"||!o.timestamp)return;
+    let c=o.content||""; if(o.type===1||c.startsWith("data:image"))c="[图片]"; else if(o.type===5)c="[表情]"; else c=c.replace(/https?:\/\/\S+/g,"[链接]").slice(0,500);
+    const dt=new Date(o.timestamp*1000), date=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).format(dt);
+    const time=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Shanghai",hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(dt);
+    const gap=prev==null?null:(o.timestamp-prev)/60, restart=prev==null||gap>=60||(out.length&&out[out.length-1].date!==date);
+    const sender=o.accountName||String(o.sender); if(lastS!==sender||lastT==null||o.timestamp-lastT>90)turn++;lastS=sender;lastT=o.timestamp;
+    const topics=cTopic(c); let intent="回应/陈述";
+    if(["别","不要","不用","不需要","到此为止"].some(z=>c.includes(z))&&["计划","对象","频","绑","暴露","肢体","说"].some(z=>c.includes(z)))intent="边界表达";
+    else if(["买","订","定","去吧","出发","到楼下","行程","酒店","车票"].some(z=>c.includes(z)))intent="计划/执行";
+    else if(["烦","服了","饿死","冻麻","累死","头晕","笑死"].some(z=>c.includes(z)))intent="情绪/状态";
+    else if(["你要不要","想吃啥","想吃什么","穿","睡吧","吃饭去"].some(z=>c.includes(z)))intent="照顾/提醒";
+    else if(/[?？]$/.test(c)||["吗","呢","啥","不","没"].some(z=>c.endsWith(z)))intent="提问/确认";
+    else if(c.startsWith("我")||["刚","今天","昨天","现在","最近"].some(z=>c.includes(z)))intent="自我更新/分享";
+    let boundary=topics.includes("边界/关系定义")?(["不要","不用","不需要","别"].some(z=>c.includes(z))?"收紧":"边界议题"):(["咱","咱俩","一起","都是你的","想吃啥","去吧","买过了"].some(z=>c.includes(z))?"开放/共建":"中性");
+    let dims=[];const mp={"共同旅行":"共同事务","共同活动":"共同活动","身体/形象":"身体亲密","照顾/日常":"照顾行为","工作/认知":"认知共振","边界/关系定义":"身份/义务边界","金钱/收益":"利益/资源"};topics.forEach(t=>{if(mp[t]&&!dims.includes(mp[t]))dims.push(mp[t])});if(!dims.length)dims=["一般互动"];
+    let energy=Math.min(5,1+(c.length>=20)+(c.length>=60)+restart+["计划/执行","边界表达","照顾/提醒"].includes(intent)+(dims.some(d=>["共同事务","共同活动","照顾行为","认知共振","身份/义务边界"].includes(d))));
+    out.push({i:idx+1,ts:o.timestamp,date,time,sender,content:c,type:o.type,len:c.length,gap_min:gap==null?null:+gap.toFixed(1),restart,turn,topics,intent,energy,boundary,confidence:topics[0]!=="一般交流"?"中":"低",dims,why:(restart?"长间隔后重新开启对话；":"")+(topics[0]!=="一般交流"?"命中明确主题："+topics.join("、"):"普通连续对话"),competing:"自动规则仅用于预分析，重要结论需回到上下文与线下现实锚点",falsifier:"需要重复、跨场景或更高成本行为才能提高判断权重"});
+    prev=o.timestamp;
+  }); return out;
+}
+$("#offlineForm").onsubmit=e=>{e.preventDefault();const a=offlineData();a.push({date:$("#oDate").value,time:$("#oTime").value,event:$("#oEvent").value,source:"本地补录",tags:$("#oTags").value.split(",").map(x=>x.trim()).filter(Boolean),confidence:"事实（用户补录）"});localStorage.setItem("relationship_offline_events",JSON.stringify(a));e.target.reset();renderOffline()};
+$("#fileIn").onchange=async e=>{const f=e.target.files[0];if(!f)return;const txt=await f.text();const objs=[];txt.split(/\r?\n/).forEach(line=>{try{if(line.trim())objs.push(JSON.parse(line))}catch(_){}});DATA=analyzeImported(objs);page=1;initFilters();renderAll();alert(`已在本地载入 ${DATA.length} 条消息，不会上传。`)};
+$("#exportBtn").onclick=()=>{const blob=new Blob([JSON.stringify(filtered(),null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="sentence-analysis-filtered.json";a.click();URL.revokeObjectURL(a.href)};
+["startDate","endDate","sender","topic","q"].forEach(id=>$("#"+id).addEventListener(id==="q"?"input":"change",()=>{page=1;renderAll()}));
+$("#prev").onclick=()=>{if(page>1){page--;renderSentences(filtered())}};$("#next").onclick=()=>{const t=Math.ceil(filtered().length/PAGE);if(page<t){page++;renderSentences(filtered())}};
+document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));$("#"+b.dataset.tab).classList.add("active")});
+initFilters();renderOffline();renderAll();
+</script>
+</body></html>

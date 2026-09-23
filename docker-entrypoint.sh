@@ -14,6 +14,11 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
+# Free persistent-volume space before SQLite attempts to create/update WAL
+# files. When the 500 MB volume is full, DB initialization cannot run, so the
+# same retention cleanup inside FastAPI would otherwise be reached too late.
+python -c "from backend.control_panel import _prune_export_artifacts; result = _prune_export_artifacts(keep=2); print(f\"[entrypoint] Export retention: deleted {result['deleted_count']}, freed {result['freed_bytes']} bytes\")"
+
 # Ensure DB schema exists
 python -c "from extractor.models import init_db; init_db()"
 

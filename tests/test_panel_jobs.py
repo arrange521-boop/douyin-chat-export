@@ -4,11 +4,77 @@ The route handlers are called directly (not over HTTP) to bypass the auth
 middleware and the Playwright login probe.
 """
 import asyncio
+import os
 import sys
 
 import pytest
 
 from backend import control_panel as cp
+
+
+def test_prune_export_artifacts_keeps_only_two_newest(tmp_path):
+    exports = []
+    for index, name in enumerate(
+        [
+            "chat_1_export.jsonl",
+            "chat_2_export.json",
+            "chat_3_export.csv",
+            "chat_export_20260923_120000.zip",
+        ],
+        start=1,
+    ):
+        path = tmp_path / name
+        path.write_bytes(b"x" * index)
+        os.utime(path, ns=(index, index))
+        exports.append(path)
+
+    # These names are deliberately outside the rotation rule.
+    database = tmp_path / "chat.db"
+    database.write_bytes(b"database")
+    database_export = tmp_path / "chat_database_20260923.db"
+    database_export.write_bytes(b"database export")
+    unrelated = tmp_path / "notes.jsonl"
+    unrelated.write_bytes(b"notes")
+
+    result = cp._prune_export_artifacts(str(tmp_path), keep=2)
+
+    assert result["deleted_count"] == 2
+    assert result["freed_bytes"] == 1 + 2
+    assert result["retained"] == [exports[3].name, exports[2].name]
+    assert not exports[0].exists()
+    assert not exports[1].exists()
+    assert exports[2].exists()
+    assert exports[3].exists()
+    assert database.exists()
+    assert database_export.exists()
+    assert unrelated.exists()
+
+
+def test_prune_export_artifacts_protects_completed_export_and_clears_tmp(tmp_path):
+    oldest = tmp_path / "old_export.jsonl"
+    middle = tmp_path / "middle_export.jsonl"
+    newest = tmp_path / "new_export.jsonl"
+    for index, path in enumerate([oldest, middle, newest], start=1):
+        path.write_bytes(path.name.encode())
+        os.utime(path, ns=(index, index))
+
+    export_tmp = tmp_path / "export_tmp"
+    export_tmp.mkdir()
+    temp_member = export_tmp / "bundle_member_export.jsonl"
+    temp_member.write_bytes(b"temporary")
+
+    result = cp._prune_export_artifacts(
+        str(tmp_path),
+        keep=2,
+        protected_path=str(oldest),
+    )
+
+    assert set(result["retained"]) == {oldest.name, newest.name}
+    assert oldest.exists()
+    assert not middle.exists()
+    assert newest.exists()
+    assert not temp_member.exists()
+    assert result["deleted_count"] == 2
 
 
 def test_panel_html_disables_browser_cache():

@@ -60,6 +60,40 @@ def test_login_probe_does_not_open_browser_during_scrape(monkeypatch):
     }
 
 
+def test_login_status_recovers_orphaned_busy_state(monkeypatch):
+    monkeypatch.setitem(cp._login_state, "status", "starting")
+    monkeypatch.setitem(cp._login_state, "message", "正在启动浏览器...")
+    monkeypatch.setitem(cp._login_state, "screenshot", "stale-image")
+    monkeypatch.setitem(cp._login_state, "_task", None)
+
+    result = asyncio.run(cp.login_status())
+
+    assert result["status"] == "failed"
+    assert result["message"] == "登录进程已异常退出，请重新扫码"
+    assert result["screenshot"] is None
+
+
+def test_login_cancel_cancels_task_and_resets_state(monkeypatch):
+    monkeypatch.setitem(cp._login_state, "status", "starting")
+    monkeypatch.setitem(cp._login_state, "message", "正在启动浏览器...")
+    monkeypatch.setitem(cp._login_state, "_context", None)
+    monkeypatch.setitem(cp._login_state, "_pw", None)
+
+    async def scenario():
+        task = asyncio.create_task(asyncio.sleep(60))
+        cp._login_state["_task"] = task
+        result = await cp.login_cancel()
+        return result, task
+
+    result, task = asyncio.run(scenario())
+
+    assert result == {"status": "cancelled"}
+    assert task.cancelled()
+    assert cp._login_state["status"] == "idle"
+    assert cp._login_state["_task"] is None
+    assert cp._login_state["countdown"] == 0
+
+
 @pytest.fixture
 def isolated_scrape(tmp_path, monkeypatch):
     """Point the scrape log at a temp file and capture failure notifications so

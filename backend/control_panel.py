@@ -1333,12 +1333,16 @@ async def download_export():
 import base64
 
 _USER_DATA_DIR = paths.BROWSER_PROFILE
+_LOGIN_OPERATION_TIMEOUT = 30
+_LOGIN_CANCEL_TIMEOUT = 8
 
 _login_state = {
     "status": "idle",  # idle | starting | waiting_scan | logged_in | failed
     "screenshot": None,  # base64 png
     "message": "",
     "countdown": 0,
+    "started_at": None,
+    "_task": None,
     "_context": None,
     "_pw": None,
 }
@@ -1352,23 +1356,42 @@ async def login_check():
 
 @control_router.post("/api/login/start")
 async def login_start():
-    if _login_state["status"] in ("starting", "waiting_scan"):
-        return JSONResponse({"error": "已在登录流程中"}, status_code=409)
-    # If scraper is running, reject
-    if _scrape_state["status"] == "running":
-        return JSONResponse({"error": "请先停止采集再登录"}, status_code=409)
-    if _discover_state["status"] == "running":
-        return JSONResponse({"error": "请先停止刷新会话再登录"}, status_code=409)
+    async with _browser_job_start_lock:
+        task = _login_state.get("_task")
+        if _login_state["status"] in ("starting", "waiting_scan"):
+            if task is not None and not task.done():
+                return JSONResponse({"error": "已在登录流程中"}, status_code=409)
+            # Recover an orphaned in-memory state left behind by a browser
+            # startup crash. Without this guard the panel stays busy forever.
+            _login_state["status"] = "failed"
+            _login_state["message"] = "上次登录进程已退出，请重新扫码"
+            _login_state["screenshot"] = None
+        # If scraper is running, reject
+        if _scrape_state["status"] == "running":
+            return JSONResponse({"error": "请先停止采集再登录"}, status_code=409)
+        if _discover_state["status"] == "running":
+            return JSONResponse({"error": "请先停止刷新会话再登录"}, status_code=409)
 
-    _login_state["status"] = "starting"
-    _login_state["screenshot"] = None
-    _login_state["message"] = "正在启动浏览器..."
-    asyncio.create_task(_login_flow())
-    return {"status": "started"}
+        _login_state["status"] = "starting"
+        _login_state["screenshot"] = None
+        _login_state["message"] = "正在启动浏览器..."
+        _login_state["countdown"] = 0
+        _login_state["started_at"] = time.time()
+        task = asyncio.create_task(_login_flow())
+        _login_state["_task"] = task
+        return {"status": "started"}
 
 
 @control_router.get("/api/login/status")
 async def login_status():
+    task = _login_state.get("_task")
+    if (
+        _login_state["status"] in ("starting", "waiting_scan")
+        and (task is None or task.done())
+    ):
+        _login_state["status"] = "failed"
+        _login_state["message"] = "登录进程已异常退出，请重新扫码"
+        _login_state["screenshot"] = None
     return {
         "status": _login_state["status"],
         "screenshot": _login_state["screenshot"],
@@ -1454,20 +1477,30 @@ async def login_keyboard(req: KeyAction):
 
 @control_router.post("/api/login/cancel")
 async def login_cancel():
-    await _login_cleanup()
-    _login_state["status"] = "idle"
-    _login_state["message"] = "已取消"
-    _login_state["screenshot"] = None
-    return {"status": "cancelled"}
+    async with _browser_job_start_lock:
+        await _cancel_login_task()
+        _login_state["status"] = "idle"
+        _login_state["message"] = "已取消"
+        _login_state["screenshot"] = None
+        _login_state["countdown"] = 0
+        _login_state["started_at"] = None
+        return {"status": "cancelled"}
 
 
 @control_router.post("/api/login/clear")
 async def login_clear():
     """Clear browser profile to force re-login."""
     import shutil
-    if os.path.isdir(_USER_DATA_DIR):
-        shutil.rmtree(_USER_DATA_DIR, ignore_errors=True)
-    return {"status": "cleared"}
+    async with _browser_job_start_lock:
+        await _cancel_login_task()
+        if os.path.isdir(_USER_DATA_DIR):
+            shutil.rmtree(_USER_DATA_DIR, ignore_errors=True)
+        _login_state["status"] = "idle"
+        _login_state["message"] = "登录会话已清除"
+        _login_state["screenshot"] = None
+        _login_state["countdown"] = 0
+        _login_state["started_at"] = None
+        return {"status": "cleared"}
 
 
 def _validate_cookie_entries(parsed: list[dict]) -> tuple[list[str], list[str]]:
@@ -1623,18 +1656,36 @@ async def login_cookie_import(req: CookieImportRequest):
 
 
 async def _login_cleanup():
-    try:
-        if _login_state["_context"]:
-            await _login_state["_context"].close()
-    except Exception:
-        pass
-    try:
-        if _login_state["_pw"]:
-            await _login_state["_pw"].stop()
-    except Exception:
-        pass
+    # Detach handles first so concurrent cancel/finally cleanup is idempotent.
+    ctx = _login_state.get("_context")
+    pw = _login_state.get("_pw")
     _login_state["_context"] = None
     _login_state["_pw"] = None
+    try:
+        if ctx:
+            await asyncio.wait_for(ctx.close(), timeout=_LOGIN_CANCEL_TIMEOUT)
+    except Exception:
+        pass
+    try:
+        if pw:
+            await asyncio.wait_for(pw.stop(), timeout=_LOGIN_CANCEL_TIMEOUT)
+    except Exception:
+        pass
+
+
+async def _cancel_login_task():
+    """Cancel an active login task and release its Chromium resources."""
+    task = _login_state.get("_task")
+    current = asyncio.current_task()
+    if task is not None and task is not current and not task.done():
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=_LOGIN_CANCEL_TIMEOUT)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    await _login_cleanup()
+    if _login_state.get("_task") is task:
+        _login_state["_task"] = None
 
 
 async def _login_flow():
@@ -1643,15 +1694,20 @@ async def _login_flow():
         from playwright.async_api import async_playwright
 
         os.makedirs(_USER_DATA_DIR, exist_ok=True)
-        pw = await async_playwright().start()
+        pw = await asyncio.wait_for(
+            async_playwright().start(), timeout=_LOGIN_OPERATION_TIMEOUT
+        )
         _login_state["_pw"] = pw
 
-        ctx = await pw.chromium.launch_persistent_context(
-            _USER_DATA_DIR,
-            headless=True,
-            viewport={"width": 1400, "height": 900},
-            locale="zh-CN",
-            args=["--disable-blink-features=AutomationControlled"],
+        ctx = await asyncio.wait_for(
+            pw.chromium.launch_persistent_context(
+                _USER_DATA_DIR,
+                headless=True,
+                viewport={"width": 1400, "height": 900},
+                locale="zh-CN",
+                args=["--disable-blink-features=AutomationControlled"],
+            ),
+            timeout=_LOGIN_OPERATION_TIMEOUT,
         )
         _login_state["_context"] = ctx
         await ctx.add_init_script(
@@ -1661,7 +1717,10 @@ async def _login_flow():
 
         # Navigate to Douyin
         _login_state["message"] = "正在打开抖音..."
-        await page.goto("https://www.douyin.com/", wait_until="domcontentloaded")
+        await asyncio.wait_for(
+            page.goto("https://www.douyin.com/", wait_until="domcontentloaded"),
+            timeout=_LOGIN_OPERATION_TIMEOUT,
+        )
         await asyncio.sleep(2)
 
         # Check if already logged in
@@ -1669,7 +1728,6 @@ async def _login_flow():
         if any(c["name"] == "sessionid" and c["value"] for c in cookies):
             _login_state["status"] = "logged_in"
             _login_state["message"] = "已登录，无需扫码"
-            await _login_cleanup()
             return
 
         # Try to click login button
@@ -1694,17 +1752,21 @@ async def _login_flow():
             _login_state["countdown"] = timeout_secs - i
 
             # Screenshot
-            png = await page.screenshot(type="png")
+            png = await asyncio.wait_for(
+                page.screenshot(type="png"), timeout=_LOGIN_OPERATION_TIMEOUT
+            )
             _login_state["screenshot"] = base64.b64encode(png).decode()
             _login_state["message"] = f"请用抖音 APP 扫码 ({timeout_secs - i}s)"
 
             # Check login
-            cookies = await ctx.cookies("https://www.douyin.com")
+            cookies = await asyncio.wait_for(
+                ctx.cookies("https://www.douyin.com"),
+                timeout=_LOGIN_OPERATION_TIMEOUT,
+            )
             if any(c["name"] == "sessionid" and c["value"] for c in cookies):
                 _login_state["status"] = "logged_in"
                 _login_state["message"] = "登录成功！"
                 _login_state["screenshot"] = None
-                await _login_cleanup()
                 return
 
             await asyncio.sleep(1)
@@ -1713,8 +1775,20 @@ async def _login_flow():
             _login_state["status"] = "failed"
             _login_state["message"] = "扫码超时（3 分钟）"
 
+    except asyncio.CancelledError:
+        if _login_state["status"] in ("starting", "waiting_scan"):
+            _login_state["status"] = "idle"
+            _login_state["message"] = "已取消"
+        raise
+    except asyncio.TimeoutError:
+        _login_state["status"] = "failed"
+        _login_state["message"] = "登录浏览器响应超时，请重试"
     except Exception as e:
         _login_state["status"] = "failed"
         _login_state["message"] = f"登录错误: {e}"
     finally:
         await _login_cleanup()
+        _login_state["countdown"] = 0
+        _login_state["started_at"] = None
+        if _login_state.get("_task") is asyncio.current_task():
+            _login_state["_task"] = None

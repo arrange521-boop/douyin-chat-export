@@ -1661,11 +1661,28 @@ async function checkLogin() {
 }
 
 async function startLogin() {
-  document.getElementById('loginBtn').disabled = true;
+  const btn = document.getElementById('loginBtn');
+  const ls = document.getElementById('loginStatus');
+  const info = document.getElementById('loginInfo');
+  btn.disabled = true;
   document.getElementById('loginCancelBtn').style.display = '';
-  await fetch('/panel/api/login/start', { method: 'POST' });
-  if (loginPollTimer) clearInterval(loginPollTimer);
-  loginPollTimer = setInterval(pollLoginStatus, 1000);
+  try {
+    const r = await fetch('/panel/api/login/start', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setText(ls, 'failed'); ls.className = 'status status-failed';
+      setDynText(info, d.error || '登录启动失败，请重试');
+      finishLogin();
+      return;
+    }
+    if (loginPollTimer) clearInterval(loginPollTimer);
+    loginPollTimer = setInterval(pollLoginStatus, 1000);
+    await pollLoginStatus();
+  } catch (e) {
+    setText(ls, 'error'); ls.className = 'status status-failed';
+    setDynText(info, '无法连接登录服务，请稍后重试');
+    finishLogin();
+  }
 }
 
 async function cancelLogin() {

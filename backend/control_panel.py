@@ -78,6 +78,11 @@ _export_state = {
 _DATABASE_FILE_LOCK = Lock()
 _DATABASE_IMPORT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
+# Chat exports are disposable snapshots. Keeping only the two newest prevents
+# old JSON/JSONL/ZIP artifacts from filling the persistent Railway volume.
+_EXPORT_RETENTION_COUNT = 2
+_EXPORT_FILE_SUFFIXES = ("_export.jsonl", "_export.json", "_export.csv")
+
 # ── Scheduler state ──
 _scheduler_state = {
     "enabled": False,
@@ -127,6 +132,20 @@ CONV_LIST_PATH = paths.CONVERSATIONS_LIST
 
 async def restore_schedule_on_startup():
     """从 panel_config.json 恢复定时任务（容器重启后自动恢复）。"""
+    try:
+        cleanup = _prune_export_artifacts(keep=_EXPORT_RETENTION_COUNT)
+        if cleanup["deleted_count"]:
+            freed_mb = cleanup["freed_bytes"] / (1024 * 1024)
+            print(
+                f"[export] 启动清理完成: 删除 {cleanup['deleted_count']} 份旧导出, "
+                f"释放 {freed_mb:.1f} MB",
+                flush=True,
+            )
+    except OSError as cleanup_error:
+        # A cleanup failure should be visible without preventing the service
+        # from starting; the next export will surface a concrete write error.
+        print(f"[export] 启动清理失败: {cleanup_error}", flush=True)
+
     cfg = _load_config()
     cron = cfg.get("schedule", "").strip()
     if not cron:
@@ -1204,12 +1223,112 @@ def _install_database(staged_path: str) -> str | None:
     return os.path.basename(backup_path) if moved_db else None
 
 
+def _is_chat_export_artifact(filename: str) -> bool:
+    """Return whether *filename* is a generated chat export we may rotate."""
+    return filename.endswith(_EXPORT_FILE_SUFFIXES) or (
+        filename.startswith("chat_export_") and filename.endswith(".zip")
+    )
+
+
+def _export_artifact_paths(data_dir: str) -> list[str]:
+    """List generated chat-export files without touching DB/media/session data."""
+    try:
+        entries = os.scandir(data_dir)
+    except FileNotFoundError:
+        return []
+
+    with entries:
+        return [
+            entry.path
+            for entry in entries
+            if entry.is_file(follow_symlinks=False)
+            and _is_chat_export_artifact(entry.name)
+        ]
+
+
+def _prune_export_artifacts(
+    data_dir: str | None = None,
+    *,
+    keep: int = _EXPORT_RETENTION_COUNT,
+    protected_path: str | None = None,
+) -> dict:
+    """Delete old chat exports while retaining the newest *keep* files.
+
+    ``protected_path`` is used after an export so the newly completed artifact
+    is retained even on filesystems with coarse or unusual modification times.
+    Database exports/backups and every non-export file are deliberately outside
+    the matching rules.
+    """
+    if keep < 0:
+        raise ValueError("keep must be non-negative")
+
+    data_dir = data_dir or paths.DATA_DIR
+    artifacts = _export_artifact_paths(data_dir)
+    protected = os.path.abspath(protected_path) if protected_path else None
+
+    def sort_key(path: str):
+        stat = os.stat(path, follow_symlinks=False)
+        return (stat.st_mtime_ns, os.path.basename(path))
+
+    artifacts.sort(key=sort_key, reverse=True)
+    retained: list[str] = []
+    if protected and protected in {os.path.abspath(path) for path in artifacts}:
+        retained.append(protected)
+
+    for path in artifacts:
+        absolute = os.path.abspath(path)
+        if absolute in retained:
+            continue
+        if len(retained) < keep:
+            retained.append(absolute)
+
+    deleted_count = 0
+    freed_bytes = 0
+    for path in artifacts:
+        absolute = os.path.abspath(path)
+        if absolute in retained:
+            continue
+        try:
+            size = os.path.getsize(path)
+            os.remove(path)
+        except FileNotFoundError:
+            continue
+        deleted_count += 1
+        freed_bytes += size
+
+    # Files under export_tmp are intermediate bundle members, never user-facing
+    # retained snapshots, so they can always be removed after/start before work.
+    tmp_dir = os.path.join(data_dir, "export_tmp")
+    try:
+        tmp_entries = os.scandir(tmp_dir)
+    except FileNotFoundError:
+        tmp_entries = None
+    if tmp_entries is not None:
+        with tmp_entries:
+            for entry in tmp_entries:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    size = entry.stat(follow_symlinks=False).st_size
+                    os.remove(entry.path)
+                except FileNotFoundError:
+                    continue
+                deleted_count += 1
+                freed_bytes += size
+
+    return {
+        "deleted_count": deleted_count,
+        "freed_bytes": freed_bytes,
+        "retained": [os.path.basename(path) for path in retained],
+    }
+
+
 def _do_export(fmt: str, filter_name: str, conversations: list | None):
+    data_dir = paths.DATA_DIR
+    exports_before = set(_export_artifact_paths(data_dir))
     try:
         from extractor.exporter import ChatLabExporter, build_export_filename
         import zipfile
-
-        data_dir = paths.DATA_DIR
 
         if fmt == "database":
             output_path = _do_database_export()
@@ -1289,6 +1408,17 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                 size_mb = os.path.getsize(zip_path) / (1024 * 1024)
                 _export_state["message"] = f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB)"
 
+        if fmt != "database":
+            cleanup = _prune_export_artifacts(
+                data_dir,
+                keep=_EXPORT_RETENTION_COUNT,
+                protected_path=output_path,
+            )
+            if cleanup["deleted_count"]:
+                _export_state["message"] += (
+                    f" · 已清理 {cleanup['deleted_count']} 份旧导出"
+                )
+
         from backend.panel.google_drive import upload_export_if_enabled
 
         _export_state["drive_status"] = "uploading"
@@ -1306,6 +1436,13 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 
         _export_state["status"] = "completed"
     except Exception as e:
+        # A failed exporter may leave a syntactically valid-looking but
+        # incomplete file. Remove only artifacts created by this attempt.
+        for partial_path in set(_export_artifact_paths(data_dir)) - exports_before:
+            try:
+                os.remove(partial_path)
+            except FileNotFoundError:
+                pass
         _export_state["status"] = "failed"
         _export_state["message"] = f"导出失败: {e}"
 

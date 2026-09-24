@@ -46,7 +46,7 @@ svg text{font-family:inherit;fill:#6f7682;font-size:11px}
 <div class="app">
 <aside>
   <div class="brand">逐句关系分析</div>
-  <div class="sub">Hybrid Cognitive Pipeline · Local-first</div>
+  <div class="sub">Hybrid Cognitive Pipeline · Online / Local-first</div>
   <div class="nav">
     <button data-tab="overview" class="active">总览</button>
     <button data-tab="sentences">逐句分析</button>
@@ -59,7 +59,7 @@ svg text{font-family:inherit;fill:#6f7682;font-size:11px}
 </aside>
 <main>
   <div class="topbar">
-    <div><h1>关系逐句分析看板</h1><div class="hint">不输出“喜欢概率”；事实、推断、证据不足分层；线下事件与聊天导出严格分开。</div></div>
+    <div><h1>关系逐句分析看板</h1><div class="hint">线上版：导入 JSONL 后在本机浏览器解析，不上传聊天原文；事实、推断、证据不足分层。</div></div>
     <div class="actions">
       <label class="btn">导入新版 JSONL<input id="fileIn" type="file" accept=".jsonl,.json" hidden></label>
       <button class="btn" id="exportBtn">导出筛选结果</button>
@@ -233,7 +233,7 @@ function renderOffline(){
   $("#offlineList").innerHTML=a.map((x,i)=>`<div class="offline-card"><div class="meta">${esc(x.date)} ${esc(x.time||"")} · ${esc(x.source||"本地补录")}</div><div>${esc(x.event)}</div><div style="margin-top:6px">${(x.tags||[]).map(t=>`<span class="tag green">${esc(t)}</span>`).join("")}</div>${x.note?`<div class="mini">${esc(x.note)}</div>`:""}</div>`).join("");
 }
 function analyzeImported(objs){
-  const topicRules=${JSON.stringify(topic_rules, ensure_ascii=False)};
+  const topicRules={"边界/关系定义":["隐形要求","对象","朋友","计划里","不用把我放","不需要","各奔东西","暴露","隐私","别被同事发现","不要影响到我"],"共同活动":["游泳","爬山","滑雪","西山","清扬","中秋","出发","去吧"],"共同旅行":["云南","丽江","大理","西双版纳","虎跳峡","酒店","车票","行程","买票"],"工作/认知":["项目","客户","结算","中介","自渠","赚钱","合规","汇报","报告","领导","方案","签约","佣金"],"照顾/日常":["有你的","给你","带给你","想吃","饿","头晕","生病","吃饭","睡","到家","下班","加班"],"身体/形象":["体重","瘦","胸","丰满","身材","头发","美人尖","穿搭","衣服","腿","脚","脚腕"],"金钱/收益":["钱","赚","收益","分成","佣金","成本","预算","结算"]};
   let out=[],prev=null,turn=0,lastS=null,lastT=null;
   const cTopic=c=>{let h=[];Object.entries(topicRules).forEach(([k,ks])=>{if(ks.some(z=>c.includes(z)))h.push(k)});return h.length?h:["一般交流"]};
   objs.forEach((o,idx)=>{
